@@ -1,4 +1,4 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs'); // pure-JS: no native build needed on Railway/Docker
 const jwt    = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { createError } = require('../middleware/errorHandler');
