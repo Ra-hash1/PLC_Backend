@@ -41,9 +41,11 @@ const startTelemetryListener = async () => {
         rpdoRxCounter:      data.rpdo_rx_counter,
         telemetryTxCounter: data.telemetry_tx_counter,
         // Multi-servo array — present when ESP32 sends drive-level breakdown
-        servos:             data.servos      ?? null,
-        // Real output cycle counter from PLC (replaces frontend-estimated counter)
-        cycleCount:         data.cycle_count ?? null,
+        servos:             data.servos        ?? null,
+        // Real output cycle counter from PLC
+        cycleCount:         data.cycle_count   ?? null,
+        // Primary drive actual current (Amps) — restored for app compatibility
+        currentActual:      data.current_actual != null ? Number(data.current_actual) : null,
         // PLC-native state flags (populated once firmware sends them)
         plcFeedbackFresh:      data.plc_feedback_fresh       ?? null,
         machineReadyToRun:     data.machine_ready_to_run     ?? null,
@@ -131,8 +133,10 @@ const mapRow = (r) => ({
   modeDisplay:        r.mode_display,
   rpdoRxCounter:      r.rpdo_rx_counter,
   telemetryTxCounter: r.telemetry_tx_counter,
-  servos:             r.servos      ?? null,
-  cycleCount:         r.cycle_count ?? null,
+  servos:             r.servos        ?? null,
+  cycleCount:         r.cycle_count   ?? null,
+  // Primary drive actual current (Amps)
+  currentActual:      r.current_actual != null ? Number(r.current_actual) : null,
   // PLC-native state flags
   plcFeedbackFresh:       r.plc_feedback_fresh       ?? null,
   machineReadyToRun:      r.machine_ready_to_run     ?? null,
