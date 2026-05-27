@@ -3,6 +3,9 @@ const { getRedis }           = require('../config/redis');
 const { broadcastTelemetry } = require('./websocketService');
 const logger                 = require('../utils/logger');
 
+// Dedicated client for the LISTEN connection — held for the process lifetime
+let _listenerClient = null;
+
 /* ───────────────────────────────────────────────────────────
    DB LISTEN → WebSocket broadcast
    Telemetry rows are inserted directly by the ESP32 / IoT pipeline.
@@ -11,6 +14,7 @@ const logger                 = require('../utils/logger');
    ─────────────────────────────────────────────────────────── */
 const startTelemetryListener = async () => {
   const client = await pool.connect();
+  _listenerClient = client;
   await client.query('LISTEN telemetry_channel');
   logger.info('Listening to PostgreSQL channel: telemetry_channel');
 
@@ -29,7 +33,6 @@ const startTelemetryListener = async () => {
         statusWord:         data.status_word,
         errorCode:          data.error_code,
         statusFlags:        data.status_flags,
-        currentActual:      data.current_actual,
         operationEnabled:   data.operation_enabled,
         faultActive:        data.fault_active,
         warningActive:      data.warning_active,
@@ -37,6 +40,10 @@ const startTelemetryListener = async () => {
         modeDisplay:        data.mode_display,
         rpdoRxCounter:      data.rpdo_rx_counter,
         telemetryTxCounter: data.telemetry_tx_counter,
+        // Multi-servo array — present when ESP32 sends drive-level breakdown
+        servos:             data.servos ?? null,
+        // Real output cycle counter from PLC (replaces frontend-estimated counter)
+        cycleCount:         data.cycle_count ?? null,
       };
 
       // Update Redis cache
@@ -95,7 +102,6 @@ const getLatestTelemetry = async (machineId) => {
     statusWord:         r.status_word,
     errorCode:          r.error_code,
     statusFlags:        r.status_flags,
-    currentActual:      r.current_actual,
     operationEnabled:   r.operation_enabled,
     faultActive:        r.fault_active,
     warningActive:      r.warning_active,
@@ -103,12 +109,38 @@ const getLatestTelemetry = async (machineId) => {
     modeDisplay:        r.mode_display,
     rpdoRxCounter:      r.rpdo_rx_counter,
     telemetryTxCounter: r.telemetry_tx_counter,
+    // Multi-servo array — present when ESP32 sends drive-level breakdown
+    servos:             r.servos ?? null,
+    // Real output cycle counter from PLC
+    cycleCount:         r.cycle_count ?? null,
   };
 };
 
 /* ───────────────────────────────────────────────────────────
-   Historical data
+   Historical data — returns camelCase (consistent with getLatestTelemetry)
    ─────────────────────────────────────────────────────────── */
+const mapRow = (r) => ({
+  machineId:          r.machine_id,
+  siteId:             r.site_id,
+  lineId:             r.line_id,
+  ts:                 r.ts,
+  deviceUptimeMs:     r.device_uptime_ms,
+  canNodeId:          r.can_node_id,
+  canState:           r.can_state,
+  statusWord:         r.status_word,
+  errorCode:          r.error_code,
+  statusFlags:        r.status_flags,
+  operationEnabled:   r.operation_enabled,
+  faultActive:        r.fault_active,
+  warningActive:      r.warning_active,
+  remoteActive:       r.remote_active,
+  modeDisplay:        r.mode_display,
+  rpdoRxCounter:      r.rpdo_rx_counter,
+  telemetryTxCounter: r.telemetry_tx_counter,
+  servos:             r.servos     ?? null,
+  cycleCount:         r.cycle_count ?? null,
+});
+
 const getTelemetryHistory = async ({ machineId, from, to, limit }) => {
   let query  = `SELECT * FROM telemetry WHERE machine_id = $1`;
   const args = [machineId];
@@ -121,11 +153,26 @@ const getTelemetryHistory = async ({ machineId, from, to, limit }) => {
   args.push(limit);
 
   const { rows } = await pool.query(query, args);
-  return rows;
+  return rows.map(mapRow);
+};
+
+/* ───────────────────────────────────────────────────────────
+   Graceful shutdown — release the LISTEN client
+   ─────────────────────────────────────────────────────────── */
+const stopTelemetryListener = async () => {
+  if (_listenerClient) {
+    try {
+      await _listenerClient.query('UNLISTEN telemetry_channel');
+      _listenerClient.release();
+    } catch (_) { /* ignore — shutting down anyway */ }
+    _listenerClient = null;
+    logger.info('Telemetry listener stopped');
+  }
 };
 
 module.exports = {
   startTelemetryListener,
+  stopTelemetryListener,
   getLatestTelemetry,
   getTelemetryHistory,
 };

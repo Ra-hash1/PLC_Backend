@@ -20,17 +20,24 @@ const initWebSocketServer = (httpServer) => {
       try {
         const msg = JSON.parse(rawMsg);
 
-        if (msg.type === 'subscribe' && msg.machineId) {
-          subscribeClient(ws, msg.machineId);
-          ws.send(JSON.stringify({ type: 'subscribed', machineId: msg.machineId }));
-          logger.info(`WS [${connectionId}] subscribed to machine: ${msg.machineId}`);
+        // Accept both legacy { type: 'subscribe' } and mobile-app { action: 'subscribe' }
+        const isSubscribe =
+          (msg.type === 'subscribe' || msg.action === 'subscribe') && msg.machineId;
 
-          // Send latest snapshot immediately on subscribe
+        if (isSubscribe) {
+          const { machineId, siteId, lineId } = msg;
+          subscribeClient(ws, machineId, { siteId, lineId });
+          ws.send(JSON.stringify({ type: 'subscribed', machineId }));
+          logger.info(`WS [${connectionId}] subscribed → machine: ${machineId} site: ${siteId || '-'} line: ${lineId || '-'}`);
+
+          // Send latest telemetry as a 'snapshot' (DB dump, not live data).
+          // Frontend treats 'snapshot' differently from live 'telemetry' frames —
+          // it loads the data into state but does NOT mark the machine as live.
           const { getLatestTelemetry } = require('./telemetryService');
-          getLatestTelemetry(msg.machineId)
+          getLatestTelemetry(machineId)
             .then((snapshot) => {
               if (snapshot && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'telemetry', data: snapshot }));
+                ws.send(JSON.stringify({ type: 'snapshot', data: snapshot }));
               }
             })
             .catch((err) => logger.error('Failed to send snapshot:', err.message));
@@ -57,12 +64,14 @@ const initWebSocketServer = (httpServer) => {
   logger.info('WebSocket server initialised');
 };
 
-const subscribeClient = (ws, machineId) => {
+const subscribeClient = (ws, machineId, meta = {}) => {
   if (!machineClients.has(machineId)) {
     machineClients.set(machineId, new Set());
   }
   machineClients.get(machineId).add(ws);
   ws._machineId = machineId;
+  ws._siteId    = meta.siteId || null;
+  ws._lineId    = meta.lineId || null;
 };
 
 const removeClient = (ws) => {

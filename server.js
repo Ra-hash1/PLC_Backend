@@ -3,17 +3,12 @@ if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
 
-// ✅ Debug (remove later if you want)
-console.log("ENV CHECK:");
-console.log("DB_HOST:", process.env.DB_HOST);
-console.log("DB_PORT:", process.env.DB_PORT);
-
 const http = require('http');
 const app  = require('./app');
 
-const { initWebSocketServer }    = require('./services/websocketService');
-const { startTelemetryListener } = require('./services/telemetryService');
-const { startPgListener, stopPgListener } = require('./services/pgListenerService');
+const { initWebSocketServer }                        = require('./services/websocketService');
+const { startTelemetryListener, stopTelemetryListener } = require('./services/telemetryService');
+const { startPgListener, stopPgListener }            = require('./services/pgListenerService');
 const { connectDB }              = require('./config/db');
 const { client: redis }          = require('./config/redis');
 const logger                     = require('./utils/logger');
@@ -72,17 +67,14 @@ const start = async () => {
 };
 
 // ✅ Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received — shutting down');
-  await stopPgListener();
+const shutdown = async (signal) => {
+  logger.info(`${signal} received — shutting down`);
+  await Promise.all([stopPgListener(), stopTelemetryListener()]);
   server.close(() => process.exit(0));
-});
+};
 
-process.on('SIGINT', async () => {
-  logger.info('SIGINT received — shutting down');
-  await stopPgListener();
-  server.close(() => process.exit(0));
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 // 🚀 Start app
 start();
