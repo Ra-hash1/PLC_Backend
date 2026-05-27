@@ -1,23 +1,25 @@
 // services/pgListenerService.js
 const { Client } = require('pg');
-const { pool }   = require('../config/db');                    // NEW
+const { pool }   = require('../config/db');
 const { broadcastToMachine } = require('./websocketService');
 const logger                 = require('../utils/logger');
 const {
   computeSessionRuntimeSeconds,
   computeSessionPouches,
   computeProductionRatePpm,
-} = require('../utils/sessionMath');                           // NEW
+} = require('../utils/sessionMath');
 
 let listenerClient = null;
 let reconnectTimer = null;
-let sessionTick    = null;   // NEW — setInterval reference
+let sessionTick    = null;
+
+const SESSION_TICK_MS = 10_000;
 
 // ── In-memory session map ──────────────────────────────────────────────────────
 // machineId → { startAt: Date, lastPouchCounter: number }
-const activeSessions = new Map();  // NEW
+const activeSessions = new Map();
 
-// ── DB client config (unchanged) ──────────────────────────────────────────────
+// ── DB client config ───────────────────────────────────────────────────────────
 const getClientConfig = () => ({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432'),
@@ -39,8 +41,8 @@ const handleRunningTransition = async (machineId) => {
     const lastPouchCounter = rows[0] ? Number(rows[0].pouch_counter) || 0 : 0;
     const startAt          = new Date();
 
-    activeSessions.set(machineId, { startAt, lastPouchCounter });
-
+    // Write DB first — set activeSessions only on success to avoid
+    // leaving in-memory state inconsistent with DB if the write fails.
     await pool.query(
       `UPDATE machine_state
        SET session_start_at        = $1,
@@ -50,6 +52,7 @@ const handleRunningTransition = async (machineId) => {
        WHERE machine_id = $2`,
       [startAt.toISOString(), machineId]
     );
+    activeSessions.set(machineId, { startAt, lastPouchCounter });
     logger.info(`Session started: machine [${machineId}] pouchBase=${lastPouchCounter}`);
   } catch (err) {
     logger.error(`handleRunningTransition [${machineId}]:`, err.message);
@@ -69,9 +72,17 @@ const handleStopTransition = async (machineId) => {
     );
     if (!rows[0]) return;
 
-    const currentCounter  = Number(rows[0].pouch_counter)            || 0;
-    const sessionPouches  = computeSessionPouches(currentCounter, session.lastPouchCounter);
-    const sessionSeconds  = Number(rows[0].session_runtime_seconds)  || 0;
+    // Guard against rapid stop→start race: if a new session was installed
+    // while we were awaiting the DB read, skip accumulating totals for this
+    // stale stop so we don't corrupt the freshly-started session's data.
+    if (activeSessions.has(machineId)) {
+      logger.info(`Session ended: machine [${machineId}] — new session already started, skipping total accumulation`);
+      return;
+    }
+
+    const currentCounter = Number(rows[0].pouch_counter)           || 0;
+    const sessionPouches = computeSessionPouches(currentCounter, session.lastPouchCounter);
+    const sessionSeconds = Number(rows[0].session_runtime_seconds) || 0;
 
     await pool.query(
       `UPDATE machine_state
@@ -93,7 +104,9 @@ const tickAllSessions = async () => {
 
   const now = Date.now();
 
-  for (const [machineId, session] of activeSessions.entries()) {
+  // Snapshot entries before iterating — guards against activeSessions being
+  // mutated by a notification while we are suspended at an await.
+  for (const [machineId, session] of [...activeSessions.entries()]) {
     try {
       const { rows } = await pool.query(
         `SELECT pouch_counter FROM machine_state WHERE machine_id = $1`,
@@ -124,20 +137,32 @@ const tickAllSessions = async () => {
 const recoverSessions = async () => {
   try {
     const { rows } = await pool.query(
-      `SELECT machine_id, session_start_at, pouch_counter
+      `SELECT machine_id, session_start_at, pouch_counter, session_pouches
        FROM machine_state
        WHERE machine_actually_running = true AND session_start_at IS NOT NULL`
     );
 
+    if (rows.length === 0) {
+      logger.info('recoverSessions: no active sessions found');
+      return;
+    }
+
     rows.forEach(r => {
+      const currentCounter = Number(r.pouch_counter)   || 0;
+      const alreadyCounted = Number(r.session_pouches) || 0;
+      // Reconstruct the counter baseline at session start: current minus what
+      // was already counted before the restart. This preserves pre-restart
+      // production in the next tick's computeSessionPouches call.
+      const lastPouchCounter = currentCounter - alreadyCounted;
+
       activeSessions.set(r.machine_id, {
         startAt:          new Date(r.session_start_at),
-        lastPouchCounter: Number(r.pouch_counter) || 0,
+        lastPouchCounter: Math.max(0, lastPouchCounter),
       });
       logger.info(`Session recovered: machine [${r.machine_id}] from ${r.session_start_at}`);
     });
 
-    if (rows.length > 0) logger.info(`Recovered ${rows.length} active session(s)`);
+    logger.info(`Recovered ${rows.length} active session(s)`);
   } catch (err) {
     logger.error('recoverSessions failed:', err.message);
   }
@@ -151,11 +176,11 @@ const startPgListener = async () => {
   }
 
   // Re-hydrate sessions from DB (handles server restarts)
-  await recoverSessions();                                     // NEW
+  await recoverSessions();
 
-  // Start 10 s session tick (only once — guard against multiple calls)
-  if (!sessionTick) {                                          // NEW
-    sessionTick = setInterval(tickAllSessions, 10_000);
+  // Start session tick once — guard against duplicate intervals on reconnect
+  if (!sessionTick) {
+    sessionTick = setInterval(tickAllSessions, SESSION_TICK_MS);
   }
 
   listenerClient = new Client(getClientConfig());
@@ -175,13 +200,13 @@ const startPgListener = async () => {
       const payload = JSON.parse(n.payload);
       const { machineId, status, ts } = payload;
 
-      // ── Broadcast to WS clients — now includes PLC state flags ───────────
+      // Broadcast to WS clients — includes PLC state flags (null when trigger
+      // hasn't been updated yet to include them)
       broadcastToMachine(machineId, {
         type:   'machine_status',
         status,
         ts,
         source: 'db_trigger',
-        // NEW: PLC state flags (null when trigger hasn't been updated yet)
         plcFeedbackFresh:       payload.plcFeedbackFresh       ?? null,
         machineReadyToRun:      payload.machineReadyToRun      ?? null,
         machineActuallyRunning: payload.machineActuallyRunning ?? null,
@@ -193,9 +218,9 @@ const startPgListener = async () => {
 
       logger.info(`DB trigger → machine [${machineId}] status: ${status}`);
 
-      // ── Session transition detection ──────────────────────────────────────
-      const nowRunning = payload.machineActuallyRunning === true;  // NEW
-      const wasRunning = activeSessions.has(machineId);            // NEW
+      // Session transition detection
+      const nowRunning = payload.machineActuallyRunning === true;
+      const wasRunning = activeSessions.has(machineId);
 
       if (nowRunning && !wasRunning) {
         handleRunningTransition(machineId);
@@ -229,7 +254,8 @@ const scheduleReconnect = () => {
 
 const stopPgListener = async () => {
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  if (sessionTick)    { clearInterval(sessionTick); sessionTick = null; }  // NEW
+  if (sessionTick) { clearInterval(sessionTick); sessionTick = null; }
+  activeSessions.clear();
   if (listenerClient) {
     await listenerClient.end().catch(() => {});
     listenerClient = null;
