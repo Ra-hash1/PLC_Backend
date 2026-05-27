@@ -31,8 +31,15 @@ const getAllMachines = async () => {
 
 // ─── Get single machine by machineId ──────────────────
 const getMachineById = async (machineId) => {
+  // LEFT JOIN machine_state so siteId / lineId are available immediately
+  // (machines table doesn't carry them; machine_state does)
   const { rows } = await pool.query(
-    `SELECT * FROM machines WHERE machine_id = $1`,
+    `SELECT m.*,
+            ms.site_id  AS site_id,
+            ms.line_id  AS line_id
+     FROM   machines m
+     LEFT JOIN machine_state ms ON ms.machine_id = m.machine_id
+     WHERE  m.machine_id = $1`,
     [machineId]
   );
 
@@ -51,9 +58,12 @@ const getMachineById = async (machineId) => {
 
   return {
     ...machine,
-    currentStatus: telemetry?.status || 'UNKNOWN',
+    // camelCase aliases consumed by the frontend
+    siteId:        machine.site_id  ?? null,
+    lineId:        machine.line_id  ?? null,
+    currentStatus: telemetry?.status    || 'UNKNOWN',
     lastSeen:      telemetry?.timestamp || null,
-    latestData:    telemetry?.data || {},
+    latestData:    telemetry?.data      || {},
   };
 };
 
@@ -130,7 +140,45 @@ const getMachineState = async (machineId) => {
     WHERE machine_id = $1
   `;
   const { rows } = await pool.query(query, [machineId]);
-  return rows[0];
+  if (!rows[0]) return null;
+
+  const row = rows[0];
+
+  return {
+    ...row,
+
+    // ── Existing camelCase aliases ──────────────────────────────────────────
+    siteId:     row.site_id    ?? null,
+    lineId:     row.line_id    ?? null,
+    machineId:  row.machine_id,
+    status:     row.status     ?? null,
+    lastSeenAt: row.ts ? new Date(row.ts).toISOString() : null,
+
+    // ── NEW: PLC state flags (booleans — written by PLC) ────────────────────
+    plcFeedbackFresh:       row.plc_feedback_fresh        ?? null,
+    machineReadyToRun:      row.machine_ready_to_run      ?? null,
+    machineActuallyRunning: row.machine_actually_running  ?? null,
+    machineFaulted:         row.machine_faulted           ?? null,
+    machineStopping:        row.machine_stopping          ?? null,
+    machineDisabled:        row.machine_disabled          ?? null,
+    remoteStartAllowed:     row.remote_start_allowed      ?? null,
+
+    // ── NEW: Diagnostics (written by PLC) ────────────────────────────────────
+    axisErrorId:    row.axis_error_id  ?? null,
+    diagnosticWord: row.diagnostic_word ?? null,
+
+    // ── NEW: Production counters (NUMERIC → number) ──────────────────────────
+    pouchCounter:   row.pouch_counter   !== null ? Number(row.pouch_counter)   : null,
+    sessionPouches: row.session_pouches !== null ? Number(row.session_pouches) : null,
+    totalPouches:   row.total_pouches   !== null ? Number(row.total_pouches)   : null,
+
+    // ── NEW: Runtime counters (BIGINT string → number) ───────────────────────
+    sessionRuntimeSeconds: row.session_runtime_seconds !== null ? Number(row.session_runtime_seconds) : null,
+    totalRuntimeSeconds:   row.total_runtime_seconds   !== null ? Number(row.total_runtime_seconds)   : null,
+
+    // ── NEW: Derived rate ────────────────────────────────────────────────────
+    productionRatePpm: row.production_rate_ppm !== null ? Number(row.production_rate_ppm) : null,
+  };
 };
 
 const getDashboardBySite = async (siteId) => {
