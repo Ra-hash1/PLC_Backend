@@ -49,6 +49,9 @@ describe('getMachineState — v2 field mapping', () => {
     expect(result.sessionRuntimeSeconds).toBe(900);
     expect(result.totalRuntimeSeconds).toBe(18000);
     expect(result.productionRatePpm).toBeCloseTo(16.67);
+
+    // Existing fields — ts converted to ISO string
+    expect(result.lastSeenAt).toBe('2026-01-01T00:00:00.000Z');
   });
 
   test('returns null for all new fields when columns are null', async () => {
@@ -64,6 +67,7 @@ describe('getMachineState — v2 field mapping', () => {
     expect(result.pouchCounter).toBeNull();
     expect(result.sessionRuntimeSeconds).toBeNull();
     expect(result.productionRatePpm).toBeNull();
+    expect(result.lastSeenAt).toBeNull();
   });
 
   test('returns null when machine not found', async () => {
