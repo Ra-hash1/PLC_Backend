@@ -28,7 +28,7 @@ async function run() {
   const { rows: existing } = await pool.query(`
     SELECT column_name
     FROM information_schema.columns
-    WHERE table_name = 'machine_state'
+    WHERE table_name = 'machine_state' AND table_schema = 'public'
   `);
   const existingSet = new Set(existing.map(r => r.column_name));
 
@@ -45,5 +45,5 @@ async function run() {
 }
 
 run()
-  .catch(e => { console.error('Migration failed:', e.message); process.exit(1); })
+  .catch(e => { console.error('Migration failed:', e.stack || e.message); process.exit(1); })
   .finally(() => pool.end());
