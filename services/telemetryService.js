@@ -41,9 +41,26 @@ const startTelemetryListener = async () => {
         rpdoRxCounter:      data.rpdo_rx_counter,
         telemetryTxCounter: data.telemetry_tx_counter,
         // Multi-servo array — present when ESP32 sends drive-level breakdown
-        servos:             data.servos ?? null,
+        servos:             data.servos      ?? null,
         // Real output cycle counter from PLC (replaces frontend-estimated counter)
         cycleCount:         data.cycle_count ?? null,
+        // PLC-native state flags (populated once firmware sends them)
+        plcFeedbackFresh:      data.plc_feedback_fresh       ?? null,
+        machineReadyToRun:     data.machine_ready_to_run     ?? null,
+        machineActuallyRunning: data.machine_actually_running ?? null,
+        machineFaulted:        data.machine_faulted          ?? null,
+        machineStopping:       data.machine_stopping         ?? null,
+        machineDisabled:       data.machine_disabled         ?? null,
+        remoteStartAllowed:    data.remote_start_allowed     ?? null,
+        axisErrorId:           data.axis_error_id            ?? null,
+        diagnosticWord:        data.diagnostic_word          ?? null,
+        // Production counters (snapshot values at time of telemetry row)
+        totalRuntimeSeconds:   data.total_runtime_seconds    != null ? Number(data.total_runtime_seconds)   : null,
+        sessionRuntimeSeconds: data.session_runtime_seconds  != null ? Number(data.session_runtime_seconds) : null,
+        totalPouches:          data.total_pouches            != null ? Number(data.total_pouches)           : null,
+        sessionPouches:        data.session_pouches          != null ? Number(data.session_pouches)         : null,
+        pouchCounter:          data.pouch_counter            != null ? Number(data.pouch_counter)           : null,
+        productionRatePpm:     data.production_rate_ppm      != null ? Number(data.production_rate_ppm)     : null,
       };
 
       // Update Redis cache
@@ -90,30 +107,7 @@ const getLatestTelemetry = async (machineId) => {
 
   if (!rows.length) return null;
 
-  const r = rows[0];
-  return {
-    machineId:          r.machine_id,
-    siteId:             r.site_id,
-    lineId:             r.line_id,
-    ts:                 r.ts,
-    deviceUptimeMs:     r.device_uptime_ms,
-    canNodeId:          r.can_node_id,
-    canState:           r.can_state,
-    statusWord:         r.status_word,
-    errorCode:          r.error_code,
-    statusFlags:        r.status_flags,
-    operationEnabled:   r.operation_enabled,
-    faultActive:        r.fault_active,
-    warningActive:      r.warning_active,
-    remoteActive:       r.remote_active,
-    modeDisplay:        r.mode_display,
-    rpdoRxCounter:      r.rpdo_rx_counter,
-    telemetryTxCounter: r.telemetry_tx_counter,
-    // Multi-servo array — present when ESP32 sends drive-level breakdown
-    servos:             r.servos ?? null,
-    // Real output cycle counter from PLC
-    cycleCount:         r.cycle_count ?? null,
-  };
+  return mapRow(rows[0]);
 };
 
 /* ───────────────────────────────────────────────────────────
@@ -137,8 +131,25 @@ const mapRow = (r) => ({
   modeDisplay:        r.mode_display,
   rpdoRxCounter:      r.rpdo_rx_counter,
   telemetryTxCounter: r.telemetry_tx_counter,
-  servos:             r.servos     ?? null,
+  servos:             r.servos      ?? null,
   cycleCount:         r.cycle_count ?? null,
+  // PLC-native state flags
+  plcFeedbackFresh:       r.plc_feedback_fresh       ?? null,
+  machineReadyToRun:      r.machine_ready_to_run     ?? null,
+  machineActuallyRunning: r.machine_actually_running ?? null,
+  machineFaulted:         r.machine_faulted          ?? null,
+  machineStopping:        r.machine_stopping         ?? null,
+  machineDisabled:        r.machine_disabled         ?? null,
+  remoteStartAllowed:     r.remote_start_allowed     ?? null,
+  axisErrorId:            r.axis_error_id            ?? null,
+  diagnosticWord:         r.diagnostic_word          ?? null,
+  // Production counters (snapshot at row time)
+  totalRuntimeSeconds:    r.total_runtime_seconds    != null ? Number(r.total_runtime_seconds)   : null,
+  sessionRuntimeSeconds:  r.session_runtime_seconds  != null ? Number(r.session_runtime_seconds) : null,
+  totalPouches:           r.total_pouches            != null ? Number(r.total_pouches)           : null,
+  sessionPouches:         r.session_pouches          != null ? Number(r.session_pouches)         : null,
+  pouchCounter:           r.pouch_counter            != null ? Number(r.pouch_counter)           : null,
+  productionRatePpm:      r.production_rate_ppm      != null ? Number(r.production_rate_ppm)     : null,
 });
 
 const getTelemetryHistory = async ({ machineId, from, to, limit }) => {
