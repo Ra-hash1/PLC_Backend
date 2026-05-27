@@ -58,4 +58,8 @@ describe('computeProductionRatePpm', () => {
     // 1 pouch / (7/60) min ≈ 8.57 ppm
     expect(computeProductionRatePpm(1, 7)).toBeCloseTo(8.57, 1);
   });
+
+  test('returns 0 for negative sessionPouches (defensive guard)', () => {
+    expect(computeProductionRatePpm(-5, 60)).toBe(0);
+  });
 });

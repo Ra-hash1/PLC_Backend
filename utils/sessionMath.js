@@ -35,6 +35,7 @@ function computeSessionPouches(currentCounter, lastCounter) {
  */
 function computeProductionRatePpm(sessionPouches, sessionRuntimeSeconds) {
   if (sessionRuntimeSeconds <= 0) return 0;
+  if (sessionPouches < 0) return 0;
   const ppm = sessionPouches / (sessionRuntimeSeconds / 60);
   return Math.round(ppm * 100) / 100;
 }
