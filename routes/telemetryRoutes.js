@@ -20,19 +20,37 @@ router.get('/:machineId/latest', protect, async (req, res, next) => {
 });
 
 // GET /api/telemetry/:machineId/history
-// Returns time-series telemetry from PostgreSQL
+// Returns time-series telemetry from PostgreSQL (supports pagination via offset)
 router.get('/:machineId/history', protect, async (req, res, next) => {
   try {
-    const { from, to, limit } = req.query;
+    const { from, to, limit, offset, after_id } = req.query;
 
     const history = await telemetryService.getTelemetryHistory({
       machineId: req.params.machineId,
-      from:      from  || null,
-      to:        to    || null,
-      limit:     parseInt(limit) || 100,
+      from:      from     || null,
+      to:        to       || null,
+      limit:     parseInt(limit)    || 100,
+      offset:    parseInt(offset)   || 0,
+      afterId:   after_id != null ? parseInt(after_id) : null,
     });
 
     res.json({ success: true, data: history });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/telemetry/:machineId/count
+// Returns row count for a time range — used by the CSV export for progress tracking
+router.get('/:machineId/count', protect, async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const count = await telemetryService.getTelemetryCount({
+      machineId: req.params.machineId,
+      from:      from || null,
+      to:        to   || null,
+    });
+    res.json({ success: true, data: { count } });
   } catch (err) {
     next(err);
   }

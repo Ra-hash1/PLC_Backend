@@ -116,6 +116,7 @@ const getLatestTelemetry = async (machineId) => {
    Historical data — returns camelCase (consistent with getLatestTelemetry)
    ─────────────────────────────────────────────────────────── */
 const mapRow = (r) => ({
+  id:                 r.id,           // SERIAL PK — used as export cursor
   machineId:          r.machine_id,
   siteId:             r.site_id,
   lineId:             r.line_id,
@@ -156,19 +157,39 @@ const mapRow = (r) => ({
   productionRatePpm:      r.production_rate_ppm      != null ? Number(r.production_rate_ppm)     : null,
 });
 
-const getTelemetryHistory = async ({ machineId, from, to, limit }) => {
+const getTelemetryHistory = async ({ machineId, from, to, limit, offset = 0, afterId = null }) => {
   let query  = `SELECT * FROM telemetry WHERE machine_id = $1`;
+  const args = [machineId];
+  let idx    = 2;
+
+  if (from)         { query += ` AND ts >= $${idx++}`;  args.push(from); }
+  if (to)           { query += ` AND ts <= $${idx++}`;  args.push(to); }
+  if (afterId != null) { query += ` AND id > $${idx++}`; args.push(afterId); }
+
+  if (afterId != null) {
+    // Cursor mode (export): stable chronological order via PK — immune to concurrent inserts
+    query += ` ORDER BY id ASC LIMIT $${idx}`;
+    args.push(limit);
+  } else {
+    // Default mode (dashboard): newest-first with offset
+    query += ` ORDER BY ts DESC LIMIT $${idx} OFFSET $${idx + 1}`;
+    args.push(limit, offset);
+  }
+
+  const { rows } = await pool.query(query, args);
+  return rows.map(mapRow);
+};
+
+const getTelemetryCount = async ({ machineId, from, to }) => {
+  let query  = `SELECT COUNT(*) FROM telemetry WHERE machine_id = $1`;
   const args = [machineId];
   let idx    = 2;
 
   if (from) { query += ` AND ts >= $${idx++}`; args.push(from); }
   if (to)   { query += ` AND ts <= $${idx++}`; args.push(to); }
 
-  query += ` ORDER BY ts DESC LIMIT $${idx}`;
-  args.push(limit);
-
   const { rows } = await pool.query(query, args);
-  return rows.map(mapRow);
+  return parseInt(rows[0].count, 10);
 };
 
 /* ───────────────────────────────────────────────────────────
@@ -190,4 +211,5 @@ module.exports = {
   stopTelemetryListener,
   getLatestTelemetry,
   getTelemetryHistory,
+  getTelemetryCount,
 };
