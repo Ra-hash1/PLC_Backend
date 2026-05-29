@@ -200,10 +200,10 @@ const startPgListener = async () => {
       const payload = JSON.parse(n.payload);
       const { machineId, status, ts } = payload;
 
-      // Warn once if PLC flags are absent from payload — trigger needs updating.
-      // Run `node scripts/update_machine_state_trigger.js` for instructions.
+      // Warn once if PLC flags are absent from payload.
+      // Fix: re-run `node scripts/install_machine_state_triggers.js` to replace the trigger.
       if (payload.machineActuallyRunning === undefined) {
-        logger.warn(`machine [${machineId}] trigger payload missing PLC flags — update the DB trigger (see scripts/update_machine_state_trigger.js)`);
+        logger.warn(`machine [${machineId}] trigger payload missing PLC flags — re-run scripts/install_machine_state_triggers.js`);
       }
 
       // Broadcast to WS clients — includes PLC state flags (null when trigger

@@ -63,6 +63,13 @@ const startTelemetryListener = async () => {
         sessionPouches:        data.session_pouches          != null ? Number(data.session_pouches)         : null,
         pouchCounter:          data.pouch_counter            != null ? Number(data.pouch_counter)           : null,
         productionRatePpm:     data.production_rate_ppm      != null ? Number(data.production_rate_ppm)     : null,
+        // CANopen network topology snapshot (array of per-node objects)
+        // Trigger sends snake_case keys (canopen_nodes); Lambda may send camelCase
+        canopenNodes: Array.isArray(data.canopen_nodes) ? data.canopen_nodes
+                    : Array.isArray(data.canopenNodes)  ? data.canopenNodes
+                    : [],
+        // Full raw Lambda payload — kept for debugging / forward compatibility
+        rawPayload:   data.raw_payload ?? data.rawPayload ?? null,
       };
 
       // Update Redis cache
@@ -155,6 +162,9 @@ const mapRow = (r) => ({
   sessionPouches:         r.session_pouches          != null ? Number(r.session_pouches)         : null,
   pouchCounter:           r.pouch_counter            != null ? Number(r.pouch_counter)           : null,
   productionRatePpm:      r.production_rate_ppm      != null ? Number(r.production_rate_ppm)     : null,
+  // CANopen network topology and full raw payload (migration v5)
+  canopenNodes: Array.isArray(r.canopen_nodes) ? r.canopen_nodes : [],
+  rawPayload:   r.raw_payload   ?? null,
 });
 
 const getTelemetryHistory = async ({ machineId, from, to, limit, offset = 0, afterId = null }) => {
