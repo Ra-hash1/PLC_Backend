@@ -20,57 +20,21 @@ const startTelemetryListener = async () => {
 
   client.on('notification', async (msg) => {
     try {
-      const data = JSON.parse(msg.payload);
+      // NOTIFY payload is now minimal: { id, machine_id, site_id, line_id, ts }
+      // (migration v6 — prevents "payload string too long" when servos/canopen_nodes
+      //  are large; JSONB arrays stay in the DB row and are fetched by PK below)
+      const hint = JSON.parse(msg.payload);
+      const rowId = hint.id;
+      if (!rowId) throw new Error('NOTIFY missing row id');
 
-      const formatted = {
-        machineId:          data.machine_id,
-        siteId:             data.site_id,
-        lineId:             data.line_id,
-        ts:                 data.ts,
-        deviceUptimeMs:     data.device_uptime_ms,
-        canNodeId:          data.can_node_id,
-        canState:           data.can_state,
-        statusWord:         data.status_word,
-        errorCode:          data.error_code,
-        statusFlags:        data.status_flags,
-        operationEnabled:   data.operation_enabled,
-        faultActive:        data.fault_active,
-        warningActive:      data.warning_active,
-        remoteActive:       data.remote_active,
-        modeDisplay:        data.mode_display,
-        rpdoRxCounter:      data.rpdo_rx_counter,
-        telemetryTxCounter: data.telemetry_tx_counter,
-        // Multi-servo array — present when ESP32 sends drive-level breakdown
-        servos:             data.servos        ?? null,
-        // Real output cycle counter from PLC
-        cycleCount:         data.cycle_count   ?? null,
-        // Primary drive actual current (Amps) — restored for app compatibility
-        currentActual:      data.current_actual != null ? Number(data.current_actual) : null,
-        // PLC-native state flags (populated once firmware sends them)
-        plcFeedbackFresh:      data.plc_feedback_fresh       ?? null,
-        machineReadyToRun:     data.machine_ready_to_run     ?? null,
-        machineActuallyRunning: data.machine_actually_running ?? null,
-        machineFaulted:        data.machine_faulted          ?? null,
-        machineStopping:       data.machine_stopping         ?? null,
-        machineDisabled:       data.machine_disabled         ?? null,
-        remoteStartAllowed:    data.remote_start_allowed     ?? null,
-        axisErrorId:           data.axis_error_id            ?? null,
-        diagnosticWord:        data.diagnostic_word          ?? null,
-        // Production counters (snapshot values at time of telemetry row)
-        totalRuntimeSeconds:   data.total_runtime_seconds    != null ? Number(data.total_runtime_seconds)   : null,
-        sessionRuntimeSeconds: data.session_runtime_seconds  != null ? Number(data.session_runtime_seconds) : null,
-        totalPouches:          data.total_pouches            != null ? Number(data.total_pouches)           : null,
-        sessionPouches:        data.session_pouches          != null ? Number(data.session_pouches)         : null,
-        pouchCounter:          data.pouch_counter            != null ? Number(data.pouch_counter)           : null,
-        productionRatePpm:     data.production_rate_ppm      != null ? Number(data.production_rate_ppm)     : null,
-        // CANopen network topology snapshot (array of per-node objects)
-        // Trigger sends snake_case keys (canopen_nodes); Lambda may send camelCase
-        canopenNodes: Array.isArray(data.canopen_nodes) ? data.canopen_nodes
-                    : Array.isArray(data.canopenNodes)  ? data.canopenNodes
-                    : [],
-        // Full raw Lambda payload — kept for debugging / forward compatibility
-        rawPayload:   data.raw_payload ?? data.rawPayload ?? null,
-      };
+      // Fetch the full row — single PK lookup, extremely fast
+      const { rows } = await pool.query(
+        'SELECT * FROM telemetry WHERE id = $1',
+        [rowId]
+      );
+      if (!rows.length) return; // row disappeared (shouldn't happen)
+
+      const formatted = mapRow(rows[0]);
 
       // Update Redis cache
       const redis = getRedis();
