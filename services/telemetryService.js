@@ -166,6 +166,29 @@ const getTelemetryCount = async ({ machineId, from, to }) => {
   return parseInt(rows[0].count, 10);
 };
 
+// Returns max array lengths for servos and canopen_nodes in a time range.
+// Used by the CSV exporter to generate the right number of per-servo/per-node columns.
+const getTelemetryArrayWidths = async ({ machineId, from, to }) => {
+  let query = `
+    SELECT
+      COALESCE(MAX(jsonb_array_length(servos)),        0) AS max_servos,
+      COALESCE(MAX(jsonb_array_length(canopen_nodes)), 0) AS max_canopen_nodes
+    FROM telemetry
+    WHERE machine_id = $1
+  `;
+  const args = [machineId];
+  let idx    = 2;
+
+  if (from) { query += ` AND ts >= $${idx++}`; args.push(from); }
+  if (to)   { query += ` AND ts <= $${idx++}`; args.push(to); }
+
+  const { rows } = await pool.query(query, args);
+  return {
+    maxServos:       parseInt(rows[0].max_servos,        10),
+    maxCanopenNodes: parseInt(rows[0].max_canopen_nodes, 10),
+  };
+};
+
 /* ───────────────────────────────────────────────────────────
    Graceful shutdown — release the LISTEN client
    ─────────────────────────────────────────────────────────── */
@@ -186,4 +209,5 @@ module.exports = {
   getLatestTelemetry,
   getTelemetryHistory,
   getTelemetryCount,
+  getTelemetryArrayWidths,
 };

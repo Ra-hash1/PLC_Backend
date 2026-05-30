@@ -56,4 +56,21 @@ router.get('/:machineId/count', protect, async (req, res, next) => {
   }
 });
 
+// GET /api/telemetry/:machineId/array-widths
+// Returns max servo and canopen_node array lengths in a time range.
+// Called once before CSV export to determine how many per-servo/per-node columns to generate.
+router.get('/:machineId/array-widths', protect, async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    const widths = await telemetryService.getTelemetryArrayWidths({
+      machineId: req.params.machineId,
+      from:      from || null,
+      to:        to   || null,
+    });
+    res.json({ success: true, data: widths });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
