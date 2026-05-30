@@ -131,8 +131,25 @@ const mapRow = (r) => ({
   rawPayload:   r.raw_payload   ?? null,
 });
 
+// Explicit column list used for all bulk history fetches.
+// raw_payload is excluded — it stores the full Lambda event JSON (10–20 KB per row)
+// and is not needed for dashboard display or CSV export.
+// Excluding it reduces per-row payload by ~70%, preventing 502 timeouts on large exports.
+const HISTORY_COLS = `
+  id, site_id, line_id, machine_id, ts,
+  device_uptime_ms, can_node_id, can_state, status_word, error_code,
+  status_flags, operation_enabled, fault_active, warning_active, remote_active,
+  mode_display, rpdo_rx_counter, telemetry_tx_counter,
+  servos, canopen_nodes, cycle_count, current_actual,
+  plc_feedback_fresh, machine_ready_to_run, machine_actually_running,
+  machine_faulted, machine_stopping, machine_disabled, remote_start_allowed,
+  axis_error_id, diagnostic_word,
+  total_runtime_seconds, session_runtime_seconds,
+  total_pouches, session_pouches, pouch_counter, production_rate_ppm
+`;
+
 const getTelemetryHistory = async ({ machineId, from, to, limit, offset = 0, afterId = null }) => {
-  let query  = `SELECT * FROM telemetry WHERE machine_id = $1`;
+  let query  = `SELECT ${HISTORY_COLS} FROM telemetry WHERE machine_id = $1`;
   const args = [machineId];
   let idx    = 2;
 
